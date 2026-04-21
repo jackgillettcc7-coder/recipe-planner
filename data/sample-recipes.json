@@ -901,5 +901,31 @@
       "Return shredded chicken. Taste and adjust seasoning.",
       "Serve topped with Monterey Jack, cilantro, sliced avocado, and a squeeze of lime."
     ]
+  },
+  {
+    "id": "baked-meatball-marinara-pasta",
+    "name": "Baked Meatball Marinara Pasta",
+    "emoji": "🍝",
+    "time": "45 min",
+    "category": "Pasta",
+    "servings": 4,
+    "ingredients": [
+      { "amount": "1", "unit": "bag", "item": "Trader Joe's Italian style meatballs" },
+      { "amount": "1", "unit": "lb", "item": "rigatoni" },
+      { "amount": "28", "unit": "oz", "item": "crushed San Marzano tomatoes" },
+      { "amount": "4", "unit": "cloves", "item": "garlic, minced" },
+      { "amount": "3", "unit": "tbsp", "item": "olive oil" },
+      { "amount": "0.5", "unit": "cup", "item": "fresh basil, torn" },
+      { "amount": "8", "unit": "oz", "item": "fresh mozzarella, sliced" }
+    ],
+    "instructions": [
+      "Preheat oven to 400°F. Arrange meatballs on a baking sheet and bake 20 minutes until cooked through.",
+      "Cook rigatoni in salted boiling water until al dente. Drain and set aside.",
+      "Make marinara: heat olive oil in a large oven-safe skillet over medium heat. Add garlic and cook 1 minute. Pour in crushed tomatoes, add half the basil, season with salt and pepper, and simmer 10 minutes.",
+      "Add drained rigatoni to the skillet and toss to coat with the marinara sauce. Nestle baked meatballs into the pasta.",
+      "Lay fresh mozzarella slices over the top. Transfer to oven or switch to broil.",
+      "Broil 3-4 minutes until mozzarella is bubbly and lightly golden.",
+      "Finish with remaining fresh basil and a drizzle of olive oil. Serve immediately."
+    ]
   }
 ]
