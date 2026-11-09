@@ -896,3 +896,39 @@ main {
   h1 { font-size: 28px; }
   .hero { padding: 2.5rem 0 2rem; }
 }
+
+/* ── Category controls ── */
+.form-hint {
+  margin-top: 0.4rem;
+  font-size: 12px;
+  color: var(--color-green-dark);
+  min-height: 1em;
+}
+.detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.detail-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--color-text-muted);
+}
+.detail-category select {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 0.5px solid var(--color-green-border);
+  background: var(--color-surface);
+  color: var(--color-charcoal);
+  cursor: pointer;
+}
+.detail-category select:focus { outline: none; border-color: var(--color-green-light); }

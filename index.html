@@ -107,7 +107,13 @@
           <button class="btn btn-danger"  id="btn-delete-recipe">Delete</button>
         </div>
       </div>
-      <span class="badge" id="detail-servings"></span>
+      <div class="detail-meta">
+        <span class="badge" id="detail-servings"></span>
+        <label class="detail-category">
+          <span>Category</span>
+          <select id="detail-category" aria-label="Move recipe to category"></select>
+        </label>
+      </div>
 
       <div class="detail-section" style="margin-top:1rem;">
         <h3>Ingredients</h3>
@@ -133,6 +139,12 @@
         <div class="form-group">
           <label for="editor-name">Recipe Name</label>
           <input type="text" id="editor-name" placeholder="e.g. Chicken Stir Fry">
+        </div>
+        <div class="form-group">
+          <label for="editor-category">Category</label>
+          <select id="editor-category"></select>
+          <input type="text" id="editor-category-new" placeholder="New category name, e.g. Soups" style="display:none;margin-top:0.5rem;">
+          <p class="form-hint" id="editor-category-hint"></p>
         </div>
         <div class="form-group">
           <label for="editor-servings">Servings</label>

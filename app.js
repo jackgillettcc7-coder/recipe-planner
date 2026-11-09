@@ -17,6 +17,46 @@ function saveRecipes(recipes) {
 let recipes  = [];
 let editingId = null;
 
+// ── Categories ───────────────────────────────────────────────
+const RECIPE_CATS   = ['Chicken', 'Seafood', 'Steak', 'Ground Meat', 'Pasta', 'Salads', 'Crock Pot', 'Other'];
+const NEW_CAT     = '__new__';
+
+// Every category in use, in display order (built-ins first, then custom ones)
+function allCategories() {
+  const used = new Set(recipes.map(r => r.category).filter(Boolean));
+  return [...RECIPE_CATS, ...[...used].filter(c => !RECIPE_CATS.includes(c)).sort()];
+}
+
+// Best guess at a category from the recipe name, then its ingredients
+const CATEGORY_GUESSES = [
+  { cat: 'Salads',      words: ['salad'] },
+  { cat: 'Crock Pot',   words: ['crock pot', 'crockpot', 'slow cooker', 'slow-cooker'] },
+  { cat: 'Pasta',       words: ['pasta', 'spaghetti', 'penne', 'rigatoni', 'linguine', 'fettuccine', 'lasagna', 'macaroni', 'mac and cheese', 'ziti', 'orzo', 'gnocchi', 'tortellini', 'ravioli', 'egg noodle', 'lo mein'] },
+  { cat: 'Seafood',     words: ['shrimp', 'salmon', 'fish', 'cod', 'tuna', 'scallop', 'tilapia', 'halibut', 'mahi', 'crab', 'lobster', 'seafood'] },
+  { cat: 'Steak',       words: ['steak', 'flank', 'sirloin', 'ribeye', 'rib eye', 'skirt', 'filet', 'tenderloin', 'strip'] },
+  { cat: 'Ground Meat', words: ['ground beef', 'ground turkey', 'ground pork', 'ground chicken', 'meatball', 'burger', 'taco', 'sloppy', 'meatloaf'] },
+  { cat: 'Chicken',     words: ['chicken'] },
+];
+function guessCategory(name, ingredientItems = []) {
+  const match = text => {
+    // veggie stand-ins aren't pasta dishes
+    const t = (text || '').toLowerCase().replace(/spaghetti squash|zucchini noodles?|zoodles?/g, '');
+    const hit = CATEGORY_GUESSES.find(g => g.words.some(w => t.includes(w)));
+    return hit ? hit.cat : '';
+  };
+  return match(name) || match(ingredientItems.join(' | '));
+}
+
+function fillCategorySelect(selectEl, current, { placeholder } = {}) {
+  const cats = allCategories();
+  if (current && !cats.includes(current)) cats.push(current);
+  selectEl.innerHTML =
+    (placeholder ? `<option value="">${escHtml(placeholder)}</option>` : '') +
+    cats.map(c => `<option value="${escAttr(c)}">${escHtml(c)}</option>`).join('') +
+    `<option value="${NEW_CAT}">+ New category…</option>`;
+  selectEl.value = current || '';
+}
+
 // ── View routing ─────────────────────────────────────────────
 const views = {
   home:    document.getElementById('view-home'),
@@ -254,7 +294,6 @@ function renderRecipeList() {
 
   recipeGrid.innerHTML = '';
 
-  const CAT_ORDER = ['Chicken', 'Seafood', 'Steak', 'Ground Meat', 'Salads', 'Crock Pot', 'Other'];
   const grouped   = {};
   recipes.forEach(r => {
     const cat = r.category || 'Other';
@@ -262,8 +301,8 @@ function renderRecipeList() {
   });
 
   const cats = [
-    ...CAT_ORDER.filter(c => grouped[c]),
-    ...Object.keys(grouped).filter(c => !CAT_ORDER.includes(c)),
+    ...RECIPE_CATS.filter(c => grouped[c]),
+    ...Object.keys(grouped).filter(c => !RECIPE_CATS.includes(c)),
   ];
 
   cats.forEach(cat => {
@@ -286,6 +325,21 @@ function openDetail(id) {
 
   document.getElementById('detail-name').textContent     = recipe.name;
   document.getElementById('detail-servings').textContent = `Serves ${recipe.servings}`;
+
+  const catSelect = document.getElementById('detail-category');
+  fillCategorySelect(catSelect, recipe.category || 'Other');
+  catSelect.onchange = () => {
+    let cat = catSelect.value;
+    if (cat === NEW_CAT) {
+      cat = (prompt('Name the new category:') || '').trim();
+      if (!cat) { catSelect.value = recipe.category || 'Other'; return; }
+    }
+    recipe.category = cat;
+    saveRecipes(recipes);
+    fillCategorySelect(catSelect, cat);
+    renderHome();
+    renderRecipeList();
+  };
 
   const ul = document.getElementById('detail-ingredients');
   ul.innerHTML = recipe.ingredients.map(ing => {
@@ -324,6 +378,7 @@ function openNewRecipe() {
   document.getElementById('editor-title').textContent = 'New Recipe';
   document.getElementById('editor-name').value        = '';
   document.getElementById('editor-servings').value    = 4;
+  setEditorCategory('', false);
   ingredientRowsEl.innerHTML  = '';
   instructionRowsEl.innerHTML = '';
   addIngredientRow();
@@ -341,12 +396,51 @@ function openEditor(id) {
   document.getElementById('editor-title').textContent = 'Edit Recipe';
   document.getElementById('editor-name').value        = recipe.name;
   document.getElementById('editor-servings').value    = recipe.servings;
+  setEditorCategory(recipe.category || 'Other', true);
   ingredientRowsEl.innerHTML  = '';
   instructionRowsEl.innerHTML = '';
   recipe.ingredients.forEach(ing  => addIngredientRow(ing));
   recipe.instructions.forEach(step => addInstructionRow(step));
   showView('editor');
 }
+
+// ── Editor category picker ──
+const editorCatEl    = document.getElementById('editor-category');
+const editorCatNewEl = document.getElementById('editor-category-new');
+const editorCatHint  = document.getElementById('editor-category-hint');
+let categoryPickedByHand = false;
+
+function setEditorCategory(cat, pickedByHand) {
+  categoryPickedByHand = pickedByHand;
+  fillCategorySelect(editorCatEl, cat, { placeholder: 'Choose a category…' });
+  editorCatNewEl.style.display = 'none';
+  editorCatNewEl.value = '';
+  editorCatHint.textContent = '';
+}
+
+function currentIngredientItems() {
+  return [...ingredientRowsEl.querySelectorAll('.ing-item')].map(i => i.value);
+}
+
+// While the person hasn't picked a category themselves, keep a live best guess
+function refreshCategoryGuess() {
+  if (categoryPickedByHand) return;
+  const guess = guessCategory(document.getElementById('editor-name').value, currentIngredientItems());
+  editorCatEl.value = guess;
+  editorCatHint.textContent = guess ? `Looks like ${guess}. Change it if that's wrong.` : '';
+}
+
+editorCatEl.addEventListener('change', () => {
+  categoryPickedByHand = true;
+  editorCatHint.textContent = '';
+  const isNew = editorCatEl.value === NEW_CAT;
+  editorCatNewEl.style.display = isNew ? 'block' : 'none';
+  if (isNew) editorCatNewEl.focus();
+});
+document.getElementById('editor-name').addEventListener('input', refreshCategoryGuess);
+ingredientRowsEl.addEventListener('input', e => {
+  if (e.target.classList.contains('ing-item')) refreshCategoryGuess();
+});
 
 document.getElementById('btn-back-from-editor').addEventListener('click', () => { renderRecipeList(); showView('list'); });
 document.getElementById('btn-cancel-editor').addEventListener('click',    () => { renderRecipeList(); showView('list'); });
@@ -394,11 +488,19 @@ function saveRecipe() {
   if (ingredients.length === 0)  { alert('Please add at least one ingredient.'); return; }
   if (instructions.length === 0) { alert('Please add at least one instruction step.'); return; }
 
+  let category = editorCatEl.value;
+  if (category === NEW_CAT) {
+    category = editorCatNewEl.value.trim();
+    if (!category) { alert('Please name the new category.'); editorCatNewEl.focus(); return; }
+  }
+  if (!category) category = guessCategory(name, ingredients.map(i => i.item)) || 'Other';
+
   if (editingId) {
     const idx = recipes.findIndex(r => r.id === editingId);
-    recipes[idx] = { id: editingId, name, servings, ingredients, instructions };
+    // keep fields the editor doesn't show (emoji, time, etc.)
+    recipes[idx] = { ...recipes[idx], name, servings, category, ingredients, instructions };
   } else {
-    recipes.push({ id: crypto.randomUUID(), name, servings, ingredients, instructions });
+    recipes.push({ id: crypto.randomUUID(), name, servings, category, ingredients, instructions });
   }
 
   saveRecipes(recipes);
@@ -447,15 +549,14 @@ function renderPlanner() {
   DAYS.forEach(({ key, label }) => {
     const recipe = plan[key] ? recipes.find(r => r.id === plan[key]) : null;
 
-    const PLANNER_CAT_ORDER = ['Chicken', 'Seafood', 'Steak', 'Ground Meat', 'Salads', 'Crock Pot', 'Other'];
     const grouped = {};
     recipes.forEach(r => {
       const cat = r.category || 'Other';
       (grouped[cat] = grouped[cat] || []).push(r);
     });
     const options = [
-      ...PLANNER_CAT_ORDER.filter(c => grouped[c]),
-      ...Object.keys(grouped).filter(c => !PLANNER_CAT_ORDER.includes(c)),
+      ...RECIPE_CATS.filter(c => grouped[c]),
+      ...Object.keys(grouped).filter(c => !RECIPE_CATS.includes(c)),
     ].map(cat => `
       <optgroup label="${escAttr(cat)}">
         ${grouped[cat].map(r =>
