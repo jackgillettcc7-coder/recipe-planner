@@ -951,6 +951,8 @@
       }
       renderHome();
       showView('home');
+      // Show the badge briefly on launch, then fade it out
+      setTimeout(() => document.getElementById('splash')?.classList.add('is-done'), 900);
     }
     boot();
 
