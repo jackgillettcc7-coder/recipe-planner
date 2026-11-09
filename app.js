@@ -952,7 +952,11 @@
       renderHome();
       showView('home');
       // Show the badge briefly on launch, then fade it out
-      setTimeout(() => document.getElementById('splash')?.classList.add('is-done'), 900);
+      const splash = document.getElementById('splash');
+      setTimeout(() => {
+        splash?.classList.add('is-done');
+        setTimeout(() => splash?.remove(), 500);   // gone for good after the burst
+      }, 1900);
     }
     boot();
 
