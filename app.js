@@ -265,6 +265,14 @@
             <button class="card-btn card-btn-del"  onclick="deleteRecipe('${escAttr(recipe.id)}')">✕</button>
           </div>
         </div>`;
+      // Tap anywhere on the tile to open it (the Edit / ✕ buttons keep their own jobs)
+      card.tabIndex = 0;
+      card.setAttribute('role', 'link');
+      card.setAttribute('aria-label', recipe.name);
+      card.addEventListener('click', e => { if (!e.target.closest('button')) openDetail(recipe.id); });
+      card.addEventListener('keydown', e => {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target === card) { e.preventDefault(); openDetail(recipe.id); }
+      });
       return card;
     }
 
