@@ -395,6 +395,8 @@
         }).join('');
       document.getElementById('detail-instructions').innerHTML =
         recipe.instructions.map(step => `<li><span>${escHtml(step)}</span></li>`).join('');
+      document.getElementById('btn-start-cooking').onclick = () => CookMode.open(recipe);
+      document.getElementById('btn-ask-claude').onclick    = () => askClaude(recipe);
       document.getElementById('btn-edit-recipe').onclick   = () => openEditor(id);
       document.getElementById('btn-delete-recipe').onclick = () => { deleteRecipe(id); renderRecipeList(); showView('list'); };
       showView('detail');
@@ -689,6 +691,254 @@
       });
     });
     document.getElementById('bottom-spin')?.addEventListener('click', spinRecipe);
+
+    /* ══ TOAST ══ */
+    let toastTimer;
+    function showToast(msg, ms = 3200) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+    }
+
+    /* ══ ASK CLAUDE (opens the Claude app with the recipe loaded) ══ */
+    function recipePrompt(recipe, currentStep) {
+      const ings  = recipe.ingredients.map(i => `- ${[i.amount, i.unit, i.item].filter(Boolean).join(' ')}`).join('\n');
+      const steps = recipe.instructions.map((s, n) => `${n + 1}. ${s}`).join('\n');
+      const where = currentStep ? `\n\nI'm currently on step ${currentStep}.` : '';
+      return `I'm cooking "${recipe.name}" right now (serves ${recipe.servings}). Here's the recipe:\n\nIngredients:\n${ings}\n\nSteps:\n${steps}${where}\n\n` +
+        `Please be my sous chef: walk me through it one step at a time and wait for me to say "next" before moving on. ` +
+        `Answer any questions I have along the way (substitutions, doneness, scaling). Keep replies short, since I'm cooking and probably listening, not reading.`;
+    }
+    async function askClaude(recipe, currentStep) {
+      const text = recipePrompt(recipe, currentStep);
+      let copied = false;
+      try { await navigator.clipboard.writeText(text); copied = true; } catch {}
+      showToast(copied ? 'Opening Claude. Recipe copied: paste it if the box is empty.' : 'Opening Claude…', 4500);
+      setTimeout(() => { window.location.href = 'https://claude.ai/new?q=' + encodeURIComponent(text); }, copied ? 700 : 0);
+    }
+
+    /* ══ COOK MODE ══ */
+    const CookMode = (() => {
+      const el       = id => document.getElementById(id);
+      const overlay  = el('cook-mode');
+      const synth    = window.speechSynthesis;
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      let recipe = null, idx = 0, speakOn = true, wakeLock = null;
+      let rec = null, listening = false, speaking = false;
+      const timers = [];   // { id, label, endsAt, done, interval }
+
+      // Pages: 0 = gather ingredients, 1..n = steps, n+1 = done
+      const lastIdx = () => recipe.instructions.length + 1;
+
+      // Find a cook time in a step: "35-40 minutes" → 35, "1 hour" → 60, "30 seconds" → 0.5
+      function findDuration(text) {
+        const m = text.match(/(\d+(?:\.\d+)?)(?:\s*(?:-|–|to)\s*(\d+(?:\.\d+)?))?\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)\b/i);
+        if (!m) return null;
+        const n = parseFloat(m[1]), unit = m[3].toLowerCase();
+        const mins = unit.startsWith('h') ? n * 60 : unit.startsWith('s') ? n / 60 : n;
+        return { mins, label: m[0] };
+      }
+
+      function render() {
+        const n = recipe.instructions.length;
+        el('cook-title').textContent = recipe.name;
+        el('cook-bar-fill').style.width = `${(idx / lastIdx()) * 100}%`;
+        el('cook-prev').disabled = idx === 0;
+        el('cook-next').textContent = idx === lastIdx() ? 'Finish ✓' : idx === 0 ? 'Start →' : 'Next →';
+        const body = el('cook-body');
+        if (idx === 0) {
+          el('cook-progress').textContent = 'Get ready';
+          body.innerHTML = `<p class="cook-step-label">Gather your ingredients</p>
+            <ul class="cook-ing-list">${recipe.ingredients.map(i =>
+              `<li><span class="amount">${escHtml([i.amount, i.unit].filter(Boolean).join(' '))}</span><span>${escHtml(i.item)}</span></li>`).join('')}</ul>`;
+        } else if (idx === lastIdx()) {
+          el('cook-progress').textContent = 'Done';
+          body.innerHTML = `<div class="cook-done-emoji">🍽</div><p class="cook-step-text">Dinner's ready. Enjoy!</p>
+            <p style="margin-top:14px;color:rgba(255,255,255,0.55);font-size:15px;">Snap a photo of it for the recipe page.</p>`;
+        } else {
+          const step = recipe.instructions[idx - 1];
+          el('cook-progress').textContent = `Step ${idx} of ${n}`;
+          const dur = findDuration(step);
+          body.innerHTML = `<p class="cook-step-label">Step ${idx}</p>
+            <p class="cook-step-text${step.length > 160 ? ' is-long' : ''}">${escHtml(step)}</p>
+            ${dur ? `<button class="cook-timer-suggest" id="cook-timer-suggest">⏱ Start ${escHtml(fmtMins(dur.mins))} timer</button>` : ''}`;
+          if (dur) el('cook-timer-suggest').onclick = () => startTimer(dur.mins, `Step ${idx}`);
+        }
+        body.innerHTML = `<div class="cook-inner">${body.innerHTML}</div>`;
+        const sug = document.getElementById('cook-timer-suggest');
+        if (sug && idx > 0 && idx < lastIdx()) { const d = findDuration(recipe.instructions[idx - 1]); sug.onclick = () => startTimer(d.mins, `Step ${idx}`); }
+        body.scrollTop = 0;
+      }
+
+      function fmtMins(m) {
+        if (m < 1) return `${Math.round(m * 60)} sec`;
+        if (m >= 60) { const h = Math.floor(m / 60), r = Math.round(m % 60); return r ? `${h} hr ${r} min` : `${h} hr`; }
+        return `${Math.round(m)} min`;
+      }
+
+      /* ── speech out ── */
+      function textFor(i) {
+        if (i === 0) return `Let's make ${recipe.name}. First, gather your ingredients: ` +
+          recipe.ingredients.map(x => [x.amount, x.unit, x.item].filter(Boolean).join(' ')).join(', ') + '.';
+        if (i === lastIdx()) return `That's it. Dinner's ready. Enjoy!`;
+        return `Step ${i}. ${recipe.instructions[i - 1]}`;
+      }
+      function speak(text, force = false) {
+        if (!synth || (!speakOn && !force)) return;
+        synth.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = 0.98;
+        speaking = true; pauseListening();
+        u.onend = u.onerror = () => { speaking = false; resumeListening(); };
+        synth.speak(u);
+      }
+      function stopSpeaking() { if (synth) synth.cancel(); speaking = false; }
+
+      function go(to) {
+        if (to < 0 || to > lastIdx()) return;
+        idx = to; render(); speak(textFor(idx));
+      }
+      function next() { if (idx === lastIdx()) close(); else go(idx + 1); }
+      function prev() { go(idx - 1); }
+
+      /* ── timers ── */
+      function startTimer(mins, label) {
+        const t = { id: crypto.randomUUID(), label, endsAt: Date.now() + mins * 60000, done: false };
+        t.interval = setInterval(() => tick(t), 500);
+        timers.push(t); renderTimers();
+        showToast(`Timer set: ${fmtMins(mins)}`);
+      }
+      function tick(t) {
+        if (!t.done && Date.now() >= t.endsAt) {
+          t.done = true; clearInterval(t.interval);
+          chime(); navigator.vibrate?.([300, 150, 300, 150, 300]);
+          speak(`Timer done for ${t.label}.`, true);
+        }
+        renderTimers();
+      }
+      function cancelTimer(id) {
+        const i = timers.findIndex(t => t.id === id);
+        if (i < 0) return;
+        clearInterval(timers[i].interval); timers.splice(i, 1); renderTimers();
+      }
+      function renderTimers() {
+        el('cook-timers').innerHTML = timers.map(t => {
+          const left = Math.max(0, Math.ceil((t.endsAt - Date.now()) / 1000));
+          const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, '0');
+          return `<div class="cook-timer${t.done ? ' is-done' : ''}">
+            <span class="cook-timer-time">${t.done ? 'Done!' : `${mm}:${ss}`}</span>
+            <span class="cook-timer-label">${escHtml(t.label)}</span>
+            <button data-cancel="${t.id}" aria-label="Dismiss timer">✕</button></div>`;
+        }).join('');
+      }
+      el('cook-timers').addEventListener('click', e => {
+        const id = e.target.closest('[data-cancel]')?.dataset.cancel;
+        if (id) cancelTimer(id);
+      });
+      let audioCtx;
+      function chime() {
+        try {
+          audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+          [0, 0.35, 0.7].forEach(offset => {
+            const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
+            const t0 = audioCtx.currentTime + offset;
+            g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.3, t0 + 0.02);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.3);
+            o.start(t0); o.stop(t0 + 0.32);
+          });
+        } catch {}
+      }
+
+      /* ── voice control (speech in) ── */
+      function handleCommand(raw) {
+        const t = raw.toLowerCase().trim();
+        el('cook-heard').textContent = `Heard: "${raw.trim()}"`;
+        if (/\b(next|continue|done|okay next|go on)\b/.test(t))            return next();
+        if (/\b(back|previous|go back|last step)\b/.test(t))               return prev();
+        if (/\b(repeat|again|say that again|what was that)\b/.test(t))     return speak(textFor(idx), true);
+        if (/\bingredient/.test(t)) {
+          return speak('The ingredients are: ' + recipe.ingredients.map(x => [x.amount, x.unit, x.item].filter(Boolean).join(' ')).join(', '), true);
+        }
+        if (/\b(timer|set a timer|start timer)\b/.test(t)) {
+          const asked = findDuration(t.replace(/\b(a|an|one)\b/, '1'));
+          const fromStep = idx > 0 && idx < lastIdx() ? findDuration(recipe.instructions[idx - 1]) : null;
+          const d = asked || fromStep;
+          if (d) { startTimer(d.mins, idx > 0 && idx < lastIdx() ? `Step ${idx}` : 'Timer'); return speak(`Timer set for ${fmtMins(d.mins)}.`, true); }
+          return speak('How long? Say, set a timer for ten minutes.', true);
+        }
+        if (/\b(stop|quiet|be quiet|shh)\b/.test(t)) return stopSpeaking();
+        if (/\b(exit|close|i'm done cooking)\b/.test(t)) return close();
+      }
+      function startListening() {
+        if (!SpeechRec) { showToast("Voice control isn't supported in this browser. Try opening the site in Safari."); return; }
+        rec = new SpeechRec();
+        rec.lang = 'en-US'; rec.continuous = true; rec.interimResults = false;
+        rec.onresult = e => {
+          const r = e.results[e.results.length - 1];
+          if (r.isFinal) handleCommand(r[0].transcript);
+        };
+        rec.onerror = e => {
+          if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+            listening = false; updateMic();
+            showToast('Microphone access was blocked. Allow it in Settings to use voice control.', 5000);
+          }
+        };
+        rec.onend = () => { if (listening && !speaking) { try { rec.start(); } catch {} } };  // keep listening
+        listening = true; updateMic();
+        try { rec.start(); } catch {}
+        el('cook-heard').textContent = 'Listening… say "next", "back", "repeat", "ingredients" or "set a timer".';
+      }
+      function stopListening() { listening = false; try { rec?.abort(); } catch {} updateMic(); el('cook-heard').textContent = ''; }
+      function pauseListening()  { if (listening) { try { rec?.abort(); } catch {} } }
+      function resumeListening() { if (listening) { try { rec.start(); } catch {} } }
+      function updateMic() {
+        el('cook-mic').setAttribute('aria-pressed', String(listening));
+        el('cook-mic-label').textContent = listening ? 'Listening' : 'Voice control';
+      }
+
+      /* ── keep screen awake ── */
+      async function keepAwake() {
+        try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+      }
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && overlay.style.display !== 'none') keepAwake();
+      });
+
+      function open(r) {
+        recipe = r; idx = 0;
+        overlay.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        render(); keepAwake();
+        speak(textFor(0));
+      }
+      function close() {
+        stopSpeaking(); stopListening();
+        timers.slice().forEach(t => cancelTimer(t.id));
+        try { wakeLock?.release(); } catch {} wakeLock = null;
+        overlay.style.display = 'none';
+        document.body.style.overflow = '';
+      }
+
+      el('cook-next').addEventListener('click', next);
+      el('cook-prev').addEventListener('click', prev);
+      el('cook-close').addEventListener('click', () => {
+        if (timers.some(t => !t.done) && !confirm('You have a timer running. Exit cook mode anyway?')) return;
+        close();
+      });
+      el('cook-speak-toggle').addEventListener('click', () => {
+        speakOn = !speakOn;
+        el('cook-speak-toggle').setAttribute('aria-pressed', String(speakOn));
+        if (speakOn) speak(textFor(idx)); else stopSpeaking();
+      });
+      el('cook-mic').addEventListener('click', () => listening ? stopListening() : startListening());
+      el('cook-ingredients-btn').addEventListener('click', () => go(0));
+      el('cook-ask-claude').addEventListener('click', () => askClaude(recipe, idx > 0 && idx < lastIdx() ? idx : null));
+
+      return { open, close, _findDuration: findDuration };
+    })();
 
     /* ══ BOOT ══ */
     async function boot() {

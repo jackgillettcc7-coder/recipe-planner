@@ -114,7 +114,17 @@
             </div>
           </div>
         </div>
-        <div style="display:flex;gap:0.5rem;margin:1rem 0 1rem;">
+        <div class="cook-cta-row">
+          <button class="btn-primary cook-cta" id="btn-start-cooking">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M5 3.5v9l7-4.5-7-4.5Z" fill="currentColor"/></svg>
+            Start cooking
+          </button>
+          <button class="btn-secondary cook-cta" id="btn-ask-claude">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4.5A2.5 2.5 0 0 1 5.5 2h5A2.5 2.5 0 0 1 13 4.5v4A2.5 2.5 0 0 1 10.5 11H7l-3 3v-3.2A2.5 2.5 0 0 1 3 8.5v-4Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+            Ask Claude
+          </button>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin:0 0 1rem;">
           <button class="btn btn-outline" id="btn-edit-recipe">Edit</button>
           <button class="btn btn-danger"  id="btn-delete-recipe">Delete</button>
         </div>
@@ -251,6 +261,44 @@
       Grocery
     </button>
   </nav>
+
+  <!-- ── COOK MODE ── -->
+  <div id="cook-mode" class="cook-mode" style="display:none" role="dialog" aria-label="Cook mode">
+    <div class="cook-top">
+      <button class="cook-icon-btn" id="cook-close" aria-label="Exit cook mode">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 4l10 10M14 4L4 14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+      <div class="cook-title-wrap">
+        <p class="cook-eyebrow" id="cook-progress"></p>
+        <p class="cook-title" id="cook-title"></p>
+      </div>
+      <button class="cook-icon-btn" id="cook-speak-toggle" aria-label="Read steps aloud" aria-pressed="true">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 8v4h3l4 3.5v-11L6 8H3Z" fill="currentColor"/><path class="sound-waves" d="M13 7.5a3.5 3.5 0 0 1 0 5M15 5.5a6.5 6.5 0 0 1 0 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="cook-bar"><div class="cook-bar-fill" id="cook-bar-fill"></div></div>
+
+    <div class="cook-body" id="cook-body"></div>
+
+    <div class="cook-timers" id="cook-timers"></div>
+
+    <div class="cook-tools">
+      <button class="cook-chip" id="cook-mic" aria-pressed="false">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span id="cook-mic-label">Voice control</span>
+      </button>
+      <button class="cook-chip" id="cook-ingredients-btn">Ingredients</button>
+      <button class="cook-chip" id="cook-ask-claude">Ask Claude</button>
+    </div>
+    <p class="cook-heard" id="cook-heard"></p>
+
+    <div class="cook-nav">
+      <button class="cook-nav-btn cook-nav-back" id="cook-prev">← Back</button>
+      <button class="cook-nav-btn cook-nav-next" id="cook-next">Next →</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
 
   <!-- ── PHOTO VIEWER ── -->
   <div id="photo-viewer" class="photo-viewer" style="display:none">
