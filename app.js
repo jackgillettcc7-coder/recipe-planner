@@ -57,6 +57,92 @@ function fillCategorySelect(selectEl, current, { placeholder } = {}) {
   selectEl.value = current || '';
 }
 
+// ── Meal photos (stored in IndexedDB on this device) ─────────
+const PhotoStore = (() => {
+  let dbPromise = null;
+  function db() {
+    if (!dbPromise) {
+      dbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open('sundaySauce', 1);
+        req.onupgradeneeded = () => {
+          const store = req.result.createObjectStore('photos', { keyPath: 'id' });
+          store.createIndex('recipeId', 'recipeId');
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror   = () => reject(req.error);
+      });
+    }
+    return dbPromise;
+  }
+  async function run(mode, fn) {
+    const d = await db();
+    return new Promise((resolve, reject) => {
+      const tx  = d.transaction('photos', mode);
+      const req = fn(tx.objectStore('photos'));
+      tx.oncomplete = () => resolve(req && req.result);
+      tx.onerror    = () => reject(tx.error);
+    });
+  }
+  return {
+    all:    ()      => run('readonly',  s => s.getAll()),
+    add:    photo   => run('readwrite', s => s.put(photo)),
+    remove: id      => run('readwrite', s => s.delete(id)),
+  };
+})();
+
+// recipeId -> [{ id, recipeId, blob, added, url }], newest first
+let photosByRecipe = {};
+
+async function loadPhotos() {
+  try {
+    const all = await PhotoStore.all();
+    photosByRecipe = {};
+    all.sort((a, b) => b.added - a.added).forEach(p => {
+      p.url = URL.createObjectURL(p.blob);
+      (photosByRecipe[p.recipeId] = photosByRecipe[p.recipeId] || []).push(p);
+    });
+  } catch (err) {
+    console.warn('Photos unavailable:', err);
+  }
+}
+
+// Shrink a phone photo to ~1280px JPEG so storage stays small
+async function compressPhoto(file, maxSide = 1280, quality = 0.8) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error(`Couldn't read ${file.name || 'that photo'}.`));
+      i.src = url;
+    });
+    const scale  = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width  = Math.round(img.naturalWidth  * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    return await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function addPhotos(recipeId, files) {
+  for (const file of files) {
+    const blob  = await compressPhoto(file);
+    const photo = { id: crypto.randomUUID(), recipeId, blob, added: Date.now() };
+    await PhotoStore.add(photo);
+    photo.url = URL.createObjectURL(blob);
+    (photosByRecipe[recipeId] = photosByRecipe[recipeId] || []).unshift(photo);
+  }
+}
+
+async function deletePhoto(photo) {
+  await PhotoStore.remove(photo.id);
+  photosByRecipe[photo.recipeId] = (photosByRecipe[photo.recipeId] || []).filter(p => p.id !== photo.id);
+  URL.revokeObjectURL(photo.url);
+}
+
 // ── View routing ─────────────────────────────────────────────
 const views = {
   home:    document.getElementById('view-home'),
@@ -163,6 +249,13 @@ function getRecipeTags(recipe) {
   return tags.slice(0, 2);
 }
 
+function coverPhotoHtml(recipe) {
+  const cover = (photosByRecipe[recipe.id] || [])[0];
+  return cover
+    ? `<div class="recipe-card-img has-photo" style="background-image:url('${cover.url}')" role="img" aria-label="${escAttr(recipe.name)}"></div>`
+    : `<div class="recipe-card-img">${recipe.emoji || '🍽'}</div>`;
+}
+
 function buildRecipeCard(recipe) {
   const tags     = getRecipeTags(recipe);
   const tagsHtml = tags.map(t => `<span class="tag tag-${t.type}">${escHtml(t.label)}</span>`).join('');
@@ -170,7 +263,7 @@ function buildRecipeCard(recipe) {
   card.className  = 'recipe-card';
   card.dataset.cat = recipe.category || 'Other';
   card.innerHTML = `
-    <div class="recipe-card-img">${recipe.emoji || '🍽'}</div>
+    ${coverPhotoHtml(recipe)}
     <div class="recipe-card-body">
       <div class="recipe-card-name">${escHtml(recipe.name)}</div>
       <div class="recipe-card-meta">${recipe.time ? escHtml(recipe.time) + ' · ' : ''}Serves ${recipe.servings}</div>
@@ -352,6 +445,26 @@ function openDetail(id) {
     `<li><span>${escHtml(step)}</span></li>`
   ).join('');
 
+  renderDetailPhotos(id);
+  const photoInput = document.getElementById('photo-input');
+  photoInput.onchange = async () => {
+    const files = [...(photoInput.files || [])];
+    photoInput.value = '';
+    if (!files.length) return;
+    const btn = photoInput.closest('.btn-add-photo');
+    btn.classList.add('is-busy');
+    try {
+      await addPhotos(id, files);
+    } catch (err) {
+      alert('Photo upload failed: ' + (err?.message || String(err)));
+    } finally {
+      btn.classList.remove('is-busy');
+      renderDetailPhotos(id);
+      renderHome();
+      renderRecipeList();
+    }
+  };
+
   document.getElementById('btn-edit-recipe').onclick   = () => openEditor(id);
   document.getElementById('btn-delete-recipe').onclick = () => {
     deleteRecipe(id);
@@ -361,6 +474,42 @@ function openDetail(id) {
 
   showView('detail');
 }
+
+function renderDetailPhotos(recipeId) {
+  const grid   = document.getElementById('detail-photos');
+  const photos = photosByRecipe[recipeId] || [];
+  document.getElementById('detail-photos-empty').style.display = photos.length ? 'none' : 'block';
+  grid.innerHTML = '';
+  photos.forEach(photo => {
+    const btn = document.createElement('button');
+    btn.className = 'photo-thumb';
+    btn.innerHTML = `<img src="${photo.url}" alt="Meal photo">`;
+    btn.onclick = () => openPhotoViewer(photo);
+    grid.appendChild(btn);
+  });
+}
+
+function openPhotoViewer(photo) {
+  const viewer = document.getElementById('photo-viewer');
+  document.getElementById('photo-viewer-img').src = photo.url;
+  document.getElementById('photo-viewer-date').textContent =
+    new Date(photo.added).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  document.getElementById('photo-viewer-delete').onclick = async () => {
+    if (!confirm('Delete this photo?')) return;
+    await deletePhoto(photo);
+    viewer.style.display = 'none';
+    renderDetailPhotos(photo.recipeId);
+    renderHome();
+    renderRecipeList();
+  };
+  viewer.style.display = 'flex';
+}
+document.getElementById('photo-viewer-close').addEventListener('click', () => {
+  document.getElementById('photo-viewer').style.display = 'none';
+});
+document.getElementById('photo-viewer').addEventListener('click', e => {
+  if (e.target.id === 'photo-viewer') e.currentTarget.style.display = 'none';
+});
 
 document.getElementById('btn-back-from-detail').addEventListener('click', () => {
   renderRecipeList();
@@ -513,6 +662,7 @@ function deleteRecipe(id) {
   if (!confirm('Delete this recipe?')) return;
   recipes = recipes.filter(r => r.id !== id);
   saveRecipes(recipes);
+  (photosByRecipe[id] || []).forEach(p => deletePhoto(p).catch(() => {}));
   renderHome();
   renderRecipeList();
 }
@@ -791,6 +941,7 @@ async function boot() {
   recipes       = loadRecipes();
   plan          = loadPlan();
   groceryChecks = loadChecks();
+  await loadPhotos();
 
   if (recipes.length === 0) {
     try {
