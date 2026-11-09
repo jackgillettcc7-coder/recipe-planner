@@ -108,13 +108,27 @@
             <div class="detail-hero-meta">
               <span class="detail-badge" id="detail-servings"></span>
               <span class="detail-badge" id="detail-time"></span>
-              <span class="detail-badge" id="detail-cat"></span>
+              <label class="detail-badge detail-cat-picker">
+                <select id="detail-category" aria-label="Move recipe to category"></select>
+              </label>
             </div>
           </div>
         </div>
         <div style="display:flex;gap:0.5rem;margin:1rem 0 1rem;">
           <button class="btn btn-outline" id="btn-edit-recipe">Edit</button>
           <button class="btn btn-danger"  id="btn-delete-recipe">Delete</button>
+        </div>
+        <div class="detail-section">
+          <div class="photos-head">
+            <h3>Our Photos</h3>
+            <label class="btn btn-outline btn-add-photo">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="4" width="13" height="9.5" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 4L6.6 2.3H9.4L10.5 4" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="8" cy="8.7" r="2.4" stroke="currentColor" stroke-width="1.4"/></svg>
+              Add photo
+              <input type="file" id="photo-input" accept="image/*" multiple hidden>
+            </label>
+          </div>
+          <div class="photo-grid" id="detail-photos"></div>
+          <p class="photo-empty" id="detail-photos-empty">No photos yet. Add one the next time you make this.</p>
         </div>
         <div class="detail-section">
           <h3>Ingredients</h3>
@@ -136,6 +150,12 @@
           <div class="form-group">
             <label for="editor-name">Recipe Name</label>
             <input type="text" id="editor-name" placeholder="e.g. Chicken Stir Fry">
+          </div>
+          <div class="form-group">
+            <label for="editor-category">Category</label>
+            <select id="editor-category"></select>
+            <input type="text" id="editor-category-new" placeholder="New category name, e.g. Soups" style="display:none;margin-top:0.5rem;">
+            <p class="form-hint" id="editor-category-hint"></p>
           </div>
           <div class="form-group">
             <label for="editor-servings">Servings</label>
@@ -231,6 +251,18 @@
       Grocery
     </button>
   </nav>
+
+  <!-- ── PHOTO VIEWER ── -->
+  <div id="photo-viewer" class="photo-viewer" style="display:none">
+    <img id="photo-viewer-img" alt="">
+    <div class="photo-viewer-bar">
+      <span id="photo-viewer-date"></span>
+      <div style="display:flex;gap:0.5rem;">
+        <button class="btn btn-danger" id="photo-viewer-delete">Delete</button>
+        <button class="btn-primary" id="photo-viewer-close">Close</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ── SPIN MODAL ── -->
   <div id="spin-modal" class="spin-modal-overlay" style="display:none">

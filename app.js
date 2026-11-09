@@ -6,6 +6,7 @@
       'Ground Meat': `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="6" y="8" width="10" height="7" rx="3" fill="#8B5E3C" opacity=".4"/><path d="M8 11C9 10 10 11 11 10C12 9 13 10 14 11" stroke="#8B5E3C" stroke-width="1.2" stroke-linecap="round" opacity=".8"/></svg>`,
       'Salads':      `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="6" fill="#5A9E3A" opacity=".25"/><path d="M8 11C9 8 12 8 13 11" stroke="#5A9E3A" stroke-width="1.5" stroke-linecap="round" opacity=".8"/><path d="M9 13C10 11 12 11 13 13" stroke="#5A9E3A" stroke-width="1.5" stroke-linecap="round" opacity=".6"/></svg>`,
       'Crock Pot':   `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="5" y="9" width="12" height="9" rx="4" fill="#7B6050" opacity=".35"/><rect x="4" y="7" width="14" height="3" rx="1.5" fill="#7B6050" opacity=".5"/><rect x="9" y="4" width="4" height="4" rx="2" fill="#7B6050" opacity=".4"/></svg>`,
+      'Pasta':       `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><ellipse cx="11" cy="14" rx="7" ry="3.5" fill="#C9A030" opacity=".3"/><path d="M6 13C7 9 9 12 10 8C11 12 13 9 14 13C15 10 16 12 16 13" stroke="#B08A20" stroke-width="1.4" stroke-linecap="round" fill="none" opacity=".8"/></svg>`,
       'Other':       `<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="6" stroke="#888" stroke-width="1.5" fill="none" opacity=".4"/><path d="M11 8V11L13 13" stroke="#888" stroke-width="1.5" stroke-linecap="round" opacity=".6"/></svg>`,
     };
 
@@ -25,6 +26,127 @@
 
     /* ══ STATE ══ */
     let recipes = [], editingId = null, plan = {}, groceryChecks = new Set();
+
+    /* ══ CATEGORIES ══ */
+    const RECIPE_CATS = ['Chicken','Seafood','Steak','Ground Meat','Pasta','Salads','Crock Pot','Other'];
+    const NEW_CAT = '__new__';
+
+    // Every category in use, built-ins first, then custom ones
+    function allCategories() {
+      const used = new Set(recipes.map(r => r.category).filter(Boolean));
+      return [...RECIPE_CATS, ...[...used].filter(c => !RECIPE_CATS.includes(c)).sort()];
+    }
+
+    // Best guess at a category from the recipe name, then its ingredients
+    const CATEGORY_GUESSES = [
+      { cat: 'Salads',      words: ['salad'] },
+      { cat: 'Crock Pot',   words: ['crock pot','crockpot','slow cooker','slow-cooker'] },
+      { cat: 'Pasta',       words: ['pasta','spaghetti','penne','rigatoni','linguine','fettuccine','lasagna','macaroni','mac and cheese','ziti','orzo','gnocchi','tortellini','ravioli','egg noodle','lo mein'] },
+      { cat: 'Seafood',     words: ['shrimp','salmon','fish','cod','tuna','scallop','tilapia','halibut','mahi','crab','lobster','seafood'] },
+      { cat: 'Steak',       words: ['steak','flank','sirloin','ribeye','rib eye','skirt','filet','tenderloin','strip'] },
+      { cat: 'Ground Meat', words: ['ground beef','ground turkey','ground pork','ground chicken','meatball','burger','taco','sloppy','meatloaf'] },
+      { cat: 'Chicken',     words: ['chicken'] },
+    ];
+    function guessCategory(name, ingredientItems = []) {
+      const match = text => {
+        // veggie stand-ins aren't pasta dishes
+        const t = (text || '').toLowerCase().replace(/spaghetti squash|zucchini noodles?|zoodles?/g, '');
+        const hit = CATEGORY_GUESSES.find(g => g.words.some(w => t.includes(w)));
+        return hit ? hit.cat : '';
+      };
+      return match(name) || match(ingredientItems.join(' | '));
+    }
+
+    function fillCategorySelect(selectEl, current, { placeholder } = {}) {
+      const cats = allCategories();
+      if (current && !cats.includes(current)) cats.push(current);
+      selectEl.innerHTML =
+        (placeholder ? `<option value="">${escHtml(placeholder)}</option>` : '') +
+        cats.map(c => `<option value="${escAttr(c)}">${escHtml(c)}</option>`).join('') +
+        `<option value="${NEW_CAT}">+ New category…</option>`;
+      selectEl.value = current || '';
+    }
+
+    /* ══ MEAL PHOTOS (kept in IndexedDB on this device) ══ */
+    const PhotoStore = (() => {
+      let dbPromise = null;
+      function db() {
+        if (!dbPromise) {
+          dbPromise = new Promise((resolve, reject) => {
+            const req = indexedDB.open('sundaySauce', 1);
+            req.onupgradeneeded = () => {
+              const store = req.result.createObjectStore('photos', { keyPath: 'id' });
+              store.createIndex('recipeId', 'recipeId');
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror   = () => reject(req.error);
+          });
+        }
+        return dbPromise;
+      }
+      async function run(mode, fn) {
+        const d = await db();
+        return new Promise((resolve, reject) => {
+          const tx  = d.transaction('photos', mode);
+          const req = fn(tx.objectStore('photos'));
+          tx.oncomplete = () => resolve(req && req.result);
+          tx.onerror    = () => reject(tx.error);
+        });
+      }
+      return {
+        all:    ()    => run('readonly',  s => s.getAll()),
+        add:    photo => run('readwrite', s => s.put(photo)),
+        remove: id    => run('readwrite', s => s.delete(id)),
+      };
+    })();
+
+    // recipeId -> [{ id, recipeId, blob, added, url }], newest first
+    let photosByRecipe = {};
+
+    async function loadPhotos() {
+      try {
+        const all = await PhotoStore.all();
+        photosByRecipe = {};
+        all.sort((a, b) => b.added - a.added).forEach(p => {
+          p.url = URL.createObjectURL(p.blob);
+          (photosByRecipe[p.recipeId] = photosByRecipe[p.recipeId] || []).push(p);
+        });
+      } catch (err) { console.warn('Photos unavailable:', err); }
+    }
+    function coverPhoto(recipeId) { return (photosByRecipe[recipeId] || [])[0]; }
+
+    // Shrink a phone photo to ~1280px JPEG so storage stays small
+    async function compressPhoto(file, maxSide = 1280, quality = 0.8) {
+      const url = URL.createObjectURL(file);
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const i = new Image();
+          i.onload = () => resolve(i);
+          i.onerror = () => reject(new Error(`Couldn't read ${file.name || 'that photo'}.`));
+          i.src = url;
+        });
+        const scale  = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width  = Math.round(img.naturalWidth  * scale);
+        canvas.height = Math.round(img.naturalHeight * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        return await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+      } finally { URL.revokeObjectURL(url); }
+    }
+    async function addPhotos(recipeId, files) {
+      for (const file of files) {
+        const blob  = await compressPhoto(file);
+        const photo = { id: crypto.randomUUID(), recipeId, blob, added: Date.now() };
+        await PhotoStore.add(photo);
+        photo.url = URL.createObjectURL(blob);
+        (photosByRecipe[recipeId] = photosByRecipe[recipeId] || []).unshift(photo);
+      }
+    }
+    async function deletePhoto(photo) {
+      await PhotoStore.remove(photo.id);
+      photosByRecipe[photo.recipeId] = (photosByRecipe[photo.recipeId] || []).filter(p => p.id !== photo.id);
+      URL.revokeObjectURL(photo.url);
+    }
 
     /* ══ VIEWS ══ */
     const views = {
@@ -130,7 +252,7 @@
       card.className = 'recipe-card';
       card.dataset.cat = cat;
       card.innerHTML = `
-        <div class="recipe-card-header">
+        <div class="recipe-card-header${coverPhoto(recipe.id) ? ' has-photo' : ''}"${coverPhoto(recipe.id) ? ` style="background-image:url('${coverPhoto(recipe.id).url}')"` : ''}>
           <div class="recipe-card-icon-wrap">${getCatIcon(cat)}</div>
         </div>
         <div class="recipe-card-body">
@@ -213,7 +335,7 @@
         return;
       }
       grid.innerHTML = '';
-      const CAT_ORDER = ['Chicken','Seafood','Steak','Ground Meat','Salads','Crock Pot','Other'];
+      const CAT_ORDER = RECIPE_CATS;
       const grouped = {};
       recipes.forEach(r => { const c = r.category||'Other'; (grouped[c]=grouped[c]||[]).push(r); });
       const cats = [...CAT_ORDER.filter(c=>grouped[c]), ...Object.keys(grouped).filter(c=>!CAT_ORDER.includes(c))];
@@ -234,11 +356,37 @@
       document.getElementById('detail-name').textContent = recipe.name;
       document.getElementById('detail-servings').textContent = `Serves ${recipe.servings}`;
       document.getElementById('detail-time').textContent = recipe.time || '';
-      document.getElementById('detail-cat').textContent = recipe.category || '';
       if (!recipe.time) document.getElementById('detail-time').style.display = 'none';
       else document.getElementById('detail-time').style.display = '';
-      if (!recipe.category) document.getElementById('detail-cat').style.display = 'none';
-      else document.getElementById('detail-cat').style.display = '';
+
+      // Category picker — move the recipe in one tap
+      const catSelect = document.getElementById('detail-category');
+      fillCategorySelect(catSelect, recipe.category || 'Other');
+      catSelect.onchange = () => {
+        let cat = catSelect.value;
+        if (cat === NEW_CAT) {
+          cat = (prompt('Name the new category:') || '').trim();
+          if (!cat) { catSelect.value = recipe.category || 'Other'; return; }
+        }
+        recipe.category = cat;
+        saveRecipes(recipes);
+        fillCategorySelect(catSelect, cat);
+        renderHome(); renderRecipeList();
+      };
+
+      // Photos
+      renderDetailPhotos(id);
+      const photoInput = document.getElementById('photo-input');
+      photoInput.onchange = async () => {
+        const files = [...(photoInput.files || [])];
+        photoInput.value = '';
+        if (!files.length) return;
+        const btn = photoInput.closest('.btn-add-photo');
+        btn.classList.add('is-busy');
+        try { await addPhotos(id, files); }
+        catch (err) { alert('Photo upload failed: ' + (err?.message || err)); }
+        finally { btn.classList.remove('is-busy'); renderDetailPhotos(id); renderHome(); renderRecipeList(); }
+      };
 
       document.getElementById('detail-ingredients').innerHTML =
         recipe.ingredients.map(ing => {
@@ -251,6 +399,42 @@
       document.getElementById('btn-delete-recipe').onclick = () => { deleteRecipe(id); renderRecipeList(); showView('list'); };
       showView('detail');
     }
+    function renderDetailPhotos(recipeId) {
+      const photos = photosByRecipe[recipeId] || [];
+      const hero = document.getElementById('detail-hero');
+      hero.classList.toggle('has-photo', !!photos.length);
+      hero.style.backgroundImage = photos.length ? `url('${photos[0].url}')` : '';
+      document.getElementById('detail-photos-empty').style.display = photos.length ? 'none' : 'block';
+      const grid = document.getElementById('detail-photos');
+      grid.innerHTML = '';
+      photos.forEach(photo => {
+        const btn = document.createElement('button');
+        btn.className = 'photo-thumb';
+        btn.innerHTML = `<img src="${photo.url}" alt="Meal photo">`;
+        btn.onclick = () => openPhotoViewer(photo);
+        grid.appendChild(btn);
+      });
+    }
+    function openPhotoViewer(photo) {
+      const viewer = document.getElementById('photo-viewer');
+      document.getElementById('photo-viewer-img').src = photo.url;
+      document.getElementById('photo-viewer-date').textContent =
+        new Date(photo.added).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      document.getElementById('photo-viewer-delete').onclick = async () => {
+        if (!confirm('Delete this photo?')) return;
+        await deletePhoto(photo);
+        viewer.style.display = 'none';
+        renderDetailPhotos(photo.recipeId); renderHome(); renderRecipeList();
+      };
+      viewer.style.display = 'flex';
+    }
+    document.getElementById('photo-viewer-close').addEventListener('click', () => {
+      document.getElementById('photo-viewer').style.display = 'none';
+    });
+    document.getElementById('photo-viewer').addEventListener('click', e => {
+      if (e.target.id === 'photo-viewer') e.currentTarget.style.display = 'none';
+    });
+
     document.getElementById('btn-back-from-detail').addEventListener('click', () => { renderRecipeList(); showView('list'); });
 
     /* ══ EDITOR ══ */
@@ -262,6 +446,7 @@
       document.getElementById('editor-title').textContent = 'New Recipe';
       document.getElementById('editor-name').value = '';
       document.getElementById('editor-servings').value = 4;
+      setEditorCategory('', false);
       ingredientRowsEl.innerHTML = '';
       instructionRowsEl.innerHTML = '';
       addIngredientRow(); addIngredientRow(); addIngredientRow();
@@ -275,12 +460,43 @@
       document.getElementById('editor-title').textContent = 'Edit Recipe';
       document.getElementById('editor-name').value = recipe.name;
       document.getElementById('editor-servings').value = recipe.servings;
+      setEditorCategory(recipe.category || 'Other', true);
       ingredientRowsEl.innerHTML = '';
       instructionRowsEl.innerHTML = '';
       recipe.ingredients.forEach(ing => addIngredientRow(ing));
       recipe.instructions.forEach(step => addInstructionRow(step));
       showView('editor');
     }
+    // Editor category picker — auto-guesses until you pick one yourself
+    const editorCatEl    = document.getElementById('editor-category');
+    const editorCatNewEl = document.getElementById('editor-category-new');
+    const editorCatHint  = document.getElementById('editor-category-hint');
+    let categoryPickedByHand = false;
+
+    function setEditorCategory(cat, pickedByHand) {
+      categoryPickedByHand = pickedByHand;
+      fillCategorySelect(editorCatEl, cat, { placeholder: 'Choose a category…' });
+      editorCatNewEl.style.display = 'none';
+      editorCatNewEl.value = '';
+      editorCatHint.textContent = '';
+    }
+    function refreshCategoryGuess() {
+      if (categoryPickedByHand) return;
+      const items = [...ingredientRowsEl.querySelectorAll('.ing-item')].map(i => i.value);
+      const guess = guessCategory(document.getElementById('editor-name').value, items);
+      editorCatEl.value = guess;
+      editorCatHint.textContent = guess ? `Looks like ${guess}. Change it if that's wrong.` : '';
+    }
+    editorCatEl.addEventListener('change', () => {
+      categoryPickedByHand = true;
+      editorCatHint.textContent = '';
+      const isNew = editorCatEl.value === NEW_CAT;
+      editorCatNewEl.style.display = isNew ? 'block' : 'none';
+      if (isNew) editorCatNewEl.focus();
+    });
+    document.getElementById('editor-name').addEventListener('input', refreshCategoryGuess);
+    ingredientRowsEl.addEventListener('input', e => { if (e.target.classList.contains('ing-item')) refreshCategoryGuess(); });
+
     document.getElementById('btn-back-from-editor').addEventListener('click', () => { renderRecipeList(); showView('list'); });
     document.getElementById('btn-cancel-editor').addEventListener('click',    () => { renderRecipeList(); showView('list'); });
 
@@ -317,17 +533,25 @@
       const instructions = [...instructionRowsEl.querySelectorAll('.inst-text')].map(ta => ta.value.trim()).filter(Boolean);
       if (!ingredients.length) { alert('Please add at least one ingredient.'); return; }
       if (!instructions.length) { alert('Please add at least one instruction step.'); return; }
+      let category = editorCatEl.value;
+      if (category === NEW_CAT) {
+        category = editorCatNewEl.value.trim();
+        if (!category) { alert('Please name the new category.'); editorCatNewEl.focus(); return; }
+      }
+      if (!category) category = guessCategory(name, ingredients.map(i => i.item)) || 'Other';
       if (editingId) {
         const idx = recipes.findIndex(r => r.id === editingId);
-        recipes[idx] = { id: editingId, name, servings, ingredients, instructions };
+        // keep fields the editor doesn't show (emoji, time, etc.)
+        recipes[idx] = { ...recipes[idx], name, servings, category, ingredients, instructions };
       } else {
-        recipes.push({ id: crypto.randomUUID(), name, servings, ingredients, instructions });
+        recipes.push({ id: crypto.randomUUID(), name, servings, category, ingredients, instructions });
       }
       saveRecipes(recipes); renderHome(); renderRecipeList(); showView('list');
     }
     function deleteRecipe(id) {
       if (!confirm('Delete this recipe?')) return;
       recipes = recipes.filter(r => r.id !== id);
+      (photosByRecipe[id] || []).forEach(p => deletePhoto(p).catch(() => {}));
       saveRecipes(recipes); renderHome(); renderRecipeList();
     }
 
@@ -337,7 +561,7 @@
       grid.innerHTML = '';
       DAYS.forEach(({ key, label }) => {
         const recipe = plan[key] ? recipes.find(r => r.id === plan[key]) : null;
-        const CAT_ORDER = ['Chicken','Seafood','Steak','Ground Meat','Salads','Crock Pot','Other'];
+        const CAT_ORDER = RECIPE_CATS;
         const grouped = {};
         recipes.forEach(r => { const c = r.category||'Other'; (grouped[c]=grouped[c]||[]).push(r); });
         const options = [...CAT_ORDER.filter(c=>grouped[c]), ...Object.keys(grouped).filter(c=>!CAT_ORDER.includes(c))]
@@ -471,6 +695,7 @@
       recipes = loadRecipes();
       plan = loadPlan();
       groceryChecks = loadChecks();
+      await loadPhotos();
       if (!recipes.length) {
         try { const res = await fetch('data/sample-recipes.json'); recipes = await res.json(); saveRecipes(recipes); } catch {}
       }
